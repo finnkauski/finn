@@ -79,14 +79,30 @@ impl<'l> Lexer<'l> {
         }
     }
 
+    fn map_balance(c: &char) -> char {
+        match c {
+            ')' => '(',
+            '(' => ')',
+            '}' => '{',
+            '{' => '}',
+            ']' => '[',
+            '[' => ']',
+            _ => panic!("Tried balancing a character that doesn't make sense to balance: {c:?}"),
+        }
+    }
+
     /// Handles updating the internal state of the lexer to keep track of the state
     /// of the bracket balancing.
     fn update_balancing(&mut self, c: &char, how: BalancingUpdate) -> LResult<BalancingDepth> {
+        todo!();
+        if let Some(v) = self.balancing_state.get_mut(Lexer::map_balance(c)) {
+
+        }
         let val = self.bracket_balancing.entry(*c).or_insert(0);
         Ok(match how {
             BalancingUpdate::Increase => {
                 *val += 1;
-                *val
+                *val - 1
             }
             BalancingUpdate::Decrease => {
                 // NOTE: this deviates
@@ -94,7 +110,10 @@ impl<'l> Lexer<'l> {
                     *val -= 1;
                     *val
                 } else {
-                    return Err(LexerError::MisbalancedSymbol { symbol: *c });
+                    return Err(LexerError::MisbalancedSymbol {
+                        symbol: *c,
+                        open: Lexer::map_balance(&c),
+                    });
                 }
             }
         })
@@ -172,7 +191,7 @@ pub enum LexerError<'s> {
     },
 
     #[error("Can't find opening symbol for: {symbol:?}")]
-    MisbalancedSymbol { symbol: char },
+    MisbalancedSymbol { symbol: char, open: char },
 
     #[error("Unknown token: {symbol:?}")]
     UnknownSymbolError { symbol: char },

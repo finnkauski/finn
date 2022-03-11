@@ -14,16 +14,25 @@ struct Cli {
 fn main() -> std::io::Result<()> {
     let cli = Cli::parse();
     let content = {
-        // TODO: error handling
-        let mut reader = File::open(cli.file.expect("File needs to be provided"))?;
-        let mut buf = String::new();
-        reader.read_to_string(&mut buf)?;
-        buf
+        if let Some(filename) = cli.file {
+            // TODO: error handling
+            let mut reader = File::open(filename)?;
+            let mut buf = String::new();
+            reader.read_to_string(&mut buf)?;
+            buf
+        } else {
+            // NOTE: example testing string
+            String::from("()()()()")
+        }
     };
 
     let mut lexer = Lexer::new(&content);
-    let token = lexer.next_token();
-    println!("Token: {token:?}");
-
-    Ok(())
+    loop {
+        let token = lexer.next_token();
+        match token {
+            Ok(finn::lexer::Token::EOF) => break Ok(()),
+            Ok(token) => println!("Token: {token:?}"),
+            Err(error) => println!("Error: {error:?}"),
+        }
+    }
 }
