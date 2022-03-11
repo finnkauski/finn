@@ -22,7 +22,7 @@ fn main() -> std::io::Result<()> {
             buf
         } else {
             // NOTE: example testing string
-            String::from("()()()()")
+            String::from("( () )")
         }
     };
 

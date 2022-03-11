@@ -4,7 +4,7 @@ use std::collections::HashMap;
 /// https://www.youtube.com/watch?v=KZokxZrghCc&t=1079s
 
 /// The different kinds of punctuation
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum PunctuationKind {
     /// Keeps track of open brackets
     Open(BalancingDepth),
@@ -13,15 +13,15 @@ pub enum PunctuationKind {
     /// Actual punctuation for seperation purposes
     Seperator,
 }
-pub type BalancingDepth = i32;
+pub type BalancingDepth = u32;
 enum BalancingUpdate {
-    Increase,
-    Decrease,
+    Push,
+    Pop,
 }
 
 /// The core tokens we can process
-#[derive(Debug)]
-pub enum TokenType<'s> {
+#[derive(Debug, PartialEq, Clone)]
+pub enum Token {
     /// End of token stream and file
     EOF,
 
@@ -30,18 +30,17 @@ pub enum TokenType<'s> {
 
     /// Actions you can take on an entity
     /// *, |, ->
-    Operator(&'s str),
+    Operator(String),
 
     /// Identifiers - Sequences of characters
-    Identifier(&'s str),
+    Identifier(String),
 
     /// One Character
     Char(char),
 
     /// Numeric value
-    Numeric { raw: &'s str },
+    Numeric { raw: String },
 }
-pub type Token<'s> = TokenType<'s>;
 
 /// The lexer
 ///
@@ -62,7 +61,7 @@ pub struct Lexer<'s> {
     /// Contents of the code
     chars: std::iter::Peekable<std::str::Chars<'s>>,
 
-    bracket_balancing: HashMap<char, i32>,
+    bracket_balancing: HashMap<char, BalancingDepth>,
 }
 
 impl<'l> Lexer<'l> {
@@ -94,42 +93,42 @@ impl<'l> Lexer<'l> {
     /// Handles updating the internal state of the lexer to keep track of the state
     /// of the bracket balancing.
     fn update_balancing(&mut self, c: &char, how: BalancingUpdate) -> LResult<BalancingDepth> {
-        todo!();
-        if let Some(v) = self.balancing_state.get_mut(Lexer::map_balance(c)) {
-
-        }
-        let val = self.bracket_balancing.entry(*c).or_insert(0);
-        Ok(match how {
-            BalancingUpdate::Increase => {
-                *val += 1;
-                *val - 1
-            }
-            BalancingUpdate::Decrease => {
-                // NOTE: this deviates
-                if *val >= 1 {
-                    *val -= 1;
-                    *val
-                } else {
-                    return Err(LexerError::MisbalancedSymbol {
-                        symbol: *c,
-                        open: Lexer::map_balance(&c),
-                    });
+        match how {
+            BalancingUpdate::Push => Ok(if let Some(v) = self.bracket_balancing.get_mut(c) {
+                *v += 1;
+                *v - 1
+            } else {
+                self.bracket_balancing.insert(*c, 1);
+                0
+            }),
+            BalancingUpdate::Pop => match self.bracket_balancing.get_mut(&Lexer::map_balance(c)) {
+                Some(0) => Err(LexerError::MisbalancedSymbol {
+                    symbol: *c,
+                    open: Lexer::map_balance(c),
+                }),
+                Some(v) => {
+                    *v -= 1;
+                    Ok(*v)
                 }
-            }
-        })
+                None => Err(LexerError::MisbalancedSymbol {
+                    symbol: *c,
+                    open: Lexer::map_balance(c),
+                }),
+            },
+        }
     }
 
     /// Main functio to convert a character to a token type
-    fn to_type(&mut self, c: char) -> LResult<TokenType<'l>> {
+    fn to_type(&mut self, c: char) -> LResult<Token> {
         match c {
             '(' => Ok(Token::Punctuation {
                 raw: c,
-                kind: PunctuationKind::Open(self.update_balancing(&c, BalancingUpdate::Increase)?),
+                kind: PunctuationKind::Open(self.update_balancing(&c, BalancingUpdate::Push)?),
             }),
             ')' => Ok(Token::Punctuation {
                 raw: c,
                 // TODO: would this make sense for Close and Open to store an option.
-                kind: PunctuationKind::Close(self.update_balancing(&c, BalancingUpdate::Decrease)?),
+                kind: PunctuationKind::Close(self.update_balancing(&c, BalancingUpdate::Pop)?),
             }),
             _ => Err(LexerError::UnknownSymbolError { symbol: c }),
         }
@@ -173,6 +172,17 @@ impl<'l> Lexer<'l> {
     }
 }
 
+impl<'l> Iterator for Lexer<'l> {
+    type Item = Token;
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.next_token() {
+            Ok(Token::EOF) => None,
+            Ok(token) => Some(token),
+            Err(_) => None,
+        }
+    }
+}
+
 /// Lexer related errors
 ///
 /// NOTE: unclear if tying the lifetime of this to the
@@ -180,15 +190,12 @@ impl<'l> Lexer<'l> {
 /// optimisation that would lead to more issues down the
 /// line.
 #[derive(thiserror::Error, Debug)]
-pub enum LexerError<'s> {
+pub enum LexerError {
     #[error("Failed to operate on file")]
     IOError(#[from] std::io::Error),
 
     #[error("Expected {expected:?}, found {found:?}")]
-    MissingExpectedSymbol {
-        expected: Token<'s>,
-        found: Token<'s>,
-    },
+    MissingExpectedSymbol { expected: Token, found: Token },
 
     #[error("Can't find opening symbol for: {symbol:?}")]
     MisbalancedSymbol { symbol: char, open: char },
@@ -196,4 +203,39 @@ pub enum LexerError<'s> {
     #[error("Unknown token: {symbol:?}")]
     UnknownSymbolError { symbol: char },
 }
-pub type LResult<'s, T> = Result<T, LexerError<'s>>;
+pub type LResult<'s, T> = Result<T, LexerError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn check_bracket_nesting() {
+        // TODO: when iterator is implemented this can be refactors
+        let lex = Lexer::new("(())");
+        let mut v = Vec::new();
+        for token in lex {
+            v.push(token)
+        }
+        assert_eq!(
+            vec![
+                Token::Punctuation {
+                    raw: '(',
+                    kind: PunctuationKind::Open(0)
+                },
+                Token::Punctuation {
+                    raw: '(',
+                    kind: PunctuationKind::Open(1)
+                },
+                Token::Punctuation {
+                    raw: ')',
+                    kind: PunctuationKind::Close(1)
+                },
+                Token::Punctuation {
+                    raw: ')',
+                    kind: PunctuationKind::Close(0)
+                },
+            ],
+            v
+        )
+    }
+}
