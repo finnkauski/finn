@@ -126,7 +126,6 @@ impl<'l> Lexer<'l> {
     }
 
     fn get_next_digit(&mut self, num: &str, with_radix: u32) -> LResult<char> {
-        // check if someone didn't do 1e, you have to add next char
         match self.chars.peek() {
             None => return Err(LexerError::UnexpectedEndOfContent),
             Some(c) if !c.is_digit(with_radix) => {
@@ -149,29 +148,34 @@ impl<'l> Lexer<'l> {
     /// This doesn't deal with negative values.
     fn parse_number(&mut self, start: char) -> LResult<Token> {
         // Initialise these here to keep track of the state
+        // Follow along for float
+        // example 3.1415
+        // start is 3
         let mut seen_dot = false;
         let mut seen_exp = false;
         let mut num = start.to_string();
         let radix = 10;
-        let exp_radix = 10;
 
-        // TODO: we only fall into this function when we have a number, this wont work
+        // with 3.1415 we don't fall into this
         if start == '.' {
-            // If the next is not a digit, you will return early and pass
-            // the error up.
-            num.push(self.get_next_digit(&num, radix)?);
-            self.consume_char(); // consumes here to advance the codepoint cursor
-
             seen_dot = true;
+            // check here if the next value after `.` is a digit
+            // or not. If it isn't a digit, we get an error and we
+            // pass it up with early return.
+            //
+            // If it is a digit we also consume it here.
+            num.push(self.get_next_digit(&num, radix)?);
+            self.consume_char();
         }
 
         loop {
-            // grab the next token
+            // grab the next char which is `.` when we parse 3.1415
+            // and start is at `3`
             match self.chars.peek() {
-                Some(c) if *c == '.' && !seen_dot && !seen_exp /* mut exclusive */ => {
+                // this is where we fall in because the next is `.` on the first loop
+                Some(c) if *c == '.' && !seen_dot && !seen_exp => {
                     num.push(*c);
-                    // We need to update the position in the file so we must consume it.
-                    self.consume_char();
+                    self.consume_char(); // consume to advance cursor
                     seen_dot = true;
                 }
                 Some(c) if *c == 'e' || *c == 'E' && !seen_exp => {
@@ -179,9 +183,10 @@ impl<'l> Lexer<'l> {
                     self.consume_char();
                     seen_exp = true;
 
+                    let exp_radix = 10;
+
                     // We now need to handle the cases for `1e+10` and `1e-10`
                     match self.chars.peek() {
-
                         // TODO: could do an enum and store it in the numeric type
                         // that indicates what kind of value we're getting for the
                         // exponent - positive or negative.
@@ -191,22 +196,35 @@ impl<'l> Lexer<'l> {
                         }
                         _ => {}
                     }
+                    num.push(self.get_next_digit(&num, exp_radix)?);
+                    self.consume_char();
                 }
                 // this will handle the radix cases before it drops down to the other
                 // checks
+                //
+                // in the second loop of 3.1415 we land here
                 Some(c) if c.is_digit(radix) => {
                     num.push(*c);
                     self.consume_char();
-                },
+                }
                 // is_digit(10) is for the case where radix won't be 10
-                Some(c) if !c.is_ascii_alphabetic() || c.is_digit(10) => {
-                    // add this to the num so we don't have to do c.to_string in the
-                    // error.
+                // this looks at a case where we don't parse a preset radix
+                // and we parse for '0'..='9'
+                Some(c) if c.is_ascii_alphabetic() || c.is_digit(10) => {
                     num.push(*c);
-                    return Err(LexerError::NumericInvalidChar { raw: *c, num })
+                    return Err(LexerError::NumericInvalidChar { raw: *c, num });
                 }
                 // TODO: can make this the while condition
-                _ => break Ok(Token::Numeric { raw: num, hint: if seen_dot || seen_exp { NumericHint::Float } else { NumericHint::Int }})
+                _ => {
+                    break Ok(Token::Numeric {
+                        raw: num,
+                        hint: if seen_dot || seen_exp {
+                            NumericHint::Float
+                        } else {
+                            NumericHint::Int
+                        },
+                    })
+                }
             }
         }
     }
@@ -398,7 +416,7 @@ mod tests {
     }
     #[test]
     fn parse_float() {
-        let mut lex = Lexer::new("3.1415 .1415");
+        let mut lex = Lexer::new("3.1415 .1415 2.2e92 4.2e+24 4.2e-24");
         assert_eq!(
             lex.next_token()
                 .expect("Should produce a single float token"),
@@ -407,12 +425,31 @@ mod tests {
                 hint: NumericHint::Float
             }
         );
-        // TODO: what behaviour do we want here?
-        lex.next_token().expect("Should skip whitespace"); // skip space(s)
         assert_eq!(
             lex.next_token().expect("Should produce a single int token"),
             Token::Numeric {
                 raw: ".1415".to_string(),
+                hint: NumericHint::Float
+            }
+        );
+        assert_eq!(
+            lex.next_token().expect("Should produce a single int token"),
+            Token::Numeric {
+                raw: "2.2e92".to_string(),
+                hint: NumericHint::Float
+            }
+        );
+        assert_eq!(
+            lex.next_token().expect("Should produce a single int token"),
+            Token::Numeric {
+                raw: "4.2e+24".to_string(),
+                hint: NumericHint::Float
+            }
+        );
+        assert_eq!(
+            lex.next_token().expect("Should produce a single int token"),
+            Token::Numeric {
+                raw: "4.2e-24".to_string(),
                 hint: NumericHint::Float
             }
         )
