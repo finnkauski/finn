@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::prelude::*;
 
 use clap::Parser;
-use finn::lexer::Lexer;
+use finn_core::lexer::Lexer;
 
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
@@ -30,7 +30,7 @@ fn main() -> std::io::Result<()> {
     loop {
         let token = lexer.next_token();
         match token {
-            Ok(finn::lexer::Token::EOF) => break Ok(()),
+            Ok(finn_core::TokenType::EOF) => break Ok(()),
             Ok(token) => println!("Token: {token:?}"),
             Err(error) => println!("Error: {error:?}"),
         }

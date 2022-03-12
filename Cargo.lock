@@ -60,6 +60,13 @@ name = "finn"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "finn_core",
+]
+
+[[package]]
+name = "finn_core"
+version = "0.1.0"
+dependencies = [
  "thiserror",
 ]
 

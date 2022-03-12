@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-/// Lexer ideas from:
+/// Lexer
 ///
-/// https://www.youtube.com/watch?v=KZokxZrghCc&t=1079s
+/// Loads of help from:
+/// https://www.youtube.com/watch?v=KZokxZrghCc
 
 /// The different kinds of punctuation
 #[derive(Debug, PartialEq)]
@@ -28,7 +28,7 @@ pub enum NumericHint {
 
 /// The core tokens we can process
 #[derive(Debug, PartialEq)]
-pub enum Token {
+pub enum TokenType {
     /// End of token stream and file
     EOF,
 
@@ -48,7 +48,10 @@ pub enum Token {
     /// Numeric value
     Numeric { raw: String, hint: NumericHint },
 }
+pub type Token = TokenType;
 
+/// Lexer module
+use std::collections::HashMap;
 /// The lexer
 ///
 /// This is the main struct for the Lexer
@@ -93,7 +96,9 @@ impl<'l> Lexer<'l> {
             '{' => '}',
             ']' => '[',
             '[' => ']',
-            _ => panic!("Tried balancing a character that doesn't make sense to balance: {c:?}"),
+            _ => {
+                panic!("Tried balancing a character that doesn't make sense to balance: {c:?}")
+            }
         }
     }
 
@@ -126,15 +131,15 @@ impl<'l> Lexer<'l> {
     }
 
     fn get_next_digit(&mut self, num: &str, with_radix: u32) -> LResult<char> {
-        match self.chars.peek() {
+        match self.chars.next() {
             None => return Err(LexerError::UnexpectedEndOfContent),
             Some(c) if !c.is_digit(with_radix) => {
                 return Err(LexerError::NumericInvalidChar {
-                    raw: *c,
+                    raw: c,
                     num: String::from(num),
                 })
             }
-            Some(c) => Ok(*c),
+            Some(c) => Ok(c),
         }
     }
 
@@ -146,14 +151,14 @@ impl<'l> Lexer<'l> {
     /// - exp: 1e-10 or 1e+10
     ///
     /// This doesn't deal with negative values.
-    fn parse_number(&mut self, start: char) -> LResult<Token> {
+    fn parse_number(&mut self, start: char) -> LResult<TokenType> {
         // Initialise these here to keep track of the state
         // Follow along for float
         // example 3.1415
         // start is 3
         let mut seen_dot = false;
         let mut seen_exp = false;
-        let mut num = start.to_string();
+        let mut raw = start.to_string();
         let radix = 10;
 
         // with 3.1415 we don't fall into this
@@ -164,8 +169,7 @@ impl<'l> Lexer<'l> {
             // pass it up with early return.
             //
             // If it is a digit we also consume it here.
-            num.push(self.get_next_digit(&num, radix)?);
-            self.consume_char();
+            raw.push(self.get_next_digit(&raw, radix)?);
         }
 
         loop {
@@ -174,12 +178,12 @@ impl<'l> Lexer<'l> {
             match self.chars.peek() {
                 // this is where we fall in because the next is `.` on the first loop
                 Some(c) if *c == '.' && !seen_dot && !seen_exp => {
-                    num.push(*c);
+                    raw.push(*c);
                     self.consume_char(); // consume to advance cursor
                     seen_dot = true;
                 }
                 Some(c) if *c == 'e' || *c == 'E' && !seen_exp => {
-                    num.push(*c);
+                    raw.push(*c);
                     self.consume_char();
                     seen_exp = true;
 
@@ -191,33 +195,32 @@ impl<'l> Lexer<'l> {
                         // that indicates what kind of value we're getting for the
                         // exponent - positive or negative.
                         Some(c) if *c == '+' || *c == '-' => {
-                            num.push(*c);
+                            raw.push(*c);
                             self.consume_char();
                         }
                         _ => {}
                     }
-                    num.push(self.get_next_digit(&num, exp_radix)?);
-                    self.consume_char();
+                    raw.push(self.get_next_digit(&raw, exp_radix)?);
                 }
                 // this will handle the radix cases before it drops down to the other
                 // checks
                 //
                 // in the second loop of 3.1415 we land here
                 Some(c) if c.is_digit(radix) => {
-                    num.push(*c);
+                    raw.push(*c);
                     self.consume_char();
                 }
                 // is_digit(10) is for the case where radix won't be 10
                 // this looks at a case where we don't parse a preset radix
                 // and we parse for '0'..='9'
                 Some(c) if c.is_ascii_alphabetic() || c.is_digit(10) => {
-                    num.push(*c);
-                    return Err(LexerError::NumericInvalidChar { raw: *c, num });
+                    raw.push(*c);
+                    return Err(LexerError::NumericInvalidChar { raw: *c, num: raw });
                 }
                 // TODO: can make this the while condition
                 _ => {
-                    break Ok(Token::Numeric {
-                        raw: num,
+                    break Ok(TokenType::Numeric {
+                        raw,
                         hint: if seen_dot || seen_exp {
                             NumericHint::Float
                         } else {
@@ -230,13 +233,13 @@ impl<'l> Lexer<'l> {
     }
 
     /// Main functio to convert a character to a token type
-    fn to_type(&mut self, c: char) -> LResult<Token> {
+    fn to_type(&mut self, c: char) -> LResult<TokenType> {
         match c {
-            '(' | '{' | '[' => Ok(Token::Punctuation {
+            '(' | '{' | '[' => Ok(TokenType::Punctuation {
                 raw: c,
                 kind: PunctuationKind::Open(self.update_balancing(&c, BalancingUpdate::Push)?),
             }),
-            ')' | '}' | ']' => Ok(Token::Punctuation {
+            ')' | '}' | ']' => Ok(TokenType::Punctuation {
                 raw: c,
                 kind: PunctuationKind::Close(self.update_balancing(&c, BalancingUpdate::Pop)?),
             }),
@@ -273,21 +276,21 @@ impl<'l> Lexer<'l> {
         }
     }
 
-    pub fn next_token(&mut self) -> LResult<Token> {
+    pub fn next_token(&mut self) -> LResult<TokenType> {
         self.skip_whitespace();
 
         match self.consume_char() {
             Some(c) => self.to_type(c),
-            None => Ok(Token::EOF),
+            None => Ok(TokenType::EOF),
         }
     }
 }
 
 impl<'l> Iterator for Lexer<'l> {
-    type Item = Token;
+    type Item = TokenType;
     fn next(&mut self) -> Option<Self::Item> {
         match self.next_token() {
-            Ok(Token::EOF) => None,
+            Ok(TokenType::EOF) => None,
             Ok(token) => Some(token),
             Err(_) => None,
         }
@@ -306,7 +309,10 @@ pub enum LexerError {
     IOError(#[from] std::io::Error),
 
     #[error("Expected {expected:?}, found {found:?}")]
-    MissingExpectedSymbol { expected: Token, found: Token },
+    MissingExpectedSymbol {
+        expected: TokenType,
+        found: TokenType,
+    },
 
     #[error("Can't find opening symbol for: {symbol:?}")]
     MisbalancedSymbol { symbol: char, open: char },
@@ -321,137 +327,3 @@ pub enum LexerError {
     UnexpectedEndOfContent,
 }
 pub type LResult<'s, T> = Result<T, LexerError>;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn check_round_bracket_nesting() {
-        // TODO: when iterator is implemented this can be refactors
-        let tokens: Vec<_> = Lexer::new("(())").collect();
-        assert_eq!(
-            vec![
-                Token::Punctuation {
-                    raw: '(',
-                    kind: PunctuationKind::Open(0)
-                },
-                Token::Punctuation {
-                    raw: '(',
-                    kind: PunctuationKind::Open(1)
-                },
-                Token::Punctuation {
-                    raw: ')',
-                    kind: PunctuationKind::Close(1)
-                },
-                Token::Punctuation {
-                    raw: ')',
-                    kind: PunctuationKind::Close(0)
-                },
-            ],
-            tokens
-        )
-    }
-    #[test]
-    fn check_square_bracket_nesting() {
-        let tokens: Vec<_> = Lexer::new("[[]]").collect();
-        assert_eq!(
-            vec![
-                Token::Punctuation {
-                    raw: '[',
-                    kind: PunctuationKind::Open(0)
-                },
-                Token::Punctuation {
-                    raw: '[',
-                    kind: PunctuationKind::Open(1)
-                },
-                Token::Punctuation {
-                    raw: ']',
-                    kind: PunctuationKind::Close(1)
-                },
-                Token::Punctuation {
-                    raw: ']',
-                    kind: PunctuationKind::Close(0)
-                },
-            ],
-            tokens
-        )
-    }
-    #[test]
-    fn check_curly_bracket_nesting() {
-        let tokens: Vec<_> = Lexer::new("{{}}").collect();
-        assert_eq!(
-            vec![
-                Token::Punctuation {
-                    raw: '{',
-                    kind: PunctuationKind::Open(0)
-                },
-                Token::Punctuation {
-                    raw: '{',
-                    kind: PunctuationKind::Open(1)
-                },
-                Token::Punctuation {
-                    raw: '}',
-                    kind: PunctuationKind::Close(1)
-                },
-                Token::Punctuation {
-                    raw: '}',
-                    kind: PunctuationKind::Close(0)
-                },
-            ],
-            tokens
-        )
-    }
-    #[test]
-    fn parse_int() {
-        let token = Lexer::new("1234")
-            .next_token()
-            .expect("Should produce a single int token");
-        assert_eq!(
-            token,
-            Token::Numeric {
-                raw: "1234".to_string(),
-                hint: NumericHint::Int
-            }
-        )
-    }
-    #[test]
-    fn parse_float() {
-        let mut lex = Lexer::new("3.1415 .1415 2.2e92 4.2e+24 4.2e-24");
-        assert_eq!(
-            lex.next_token()
-                .expect("Should produce a single float token"),
-            Token::Numeric {
-                raw: "3.1415".to_string(),
-                hint: NumericHint::Float
-            }
-        );
-        assert_eq!(
-            lex.next_token().expect("Should produce a single int token"),
-            Token::Numeric {
-                raw: ".1415".to_string(),
-                hint: NumericHint::Float
-            }
-        );
-        assert_eq!(
-            lex.next_token().expect("Should produce a single int token"),
-            Token::Numeric {
-                raw: "2.2e92".to_string(),
-                hint: NumericHint::Float
-            }
-        );
-        assert_eq!(
-            lex.next_token().expect("Should produce a single int token"),
-            Token::Numeric {
-                raw: "4.2e+24".to_string(),
-                hint: NumericHint::Float
-            }
-        );
-        assert_eq!(
-            lex.next_token().expect("Should produce a single int token"),
-            Token::Numeric {
-                raw: "4.2e-24".to_string(),
-                hint: NumericHint::Float
-            }
-        )
-    }
-}
