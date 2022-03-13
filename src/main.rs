@@ -22,7 +22,7 @@ fn main() -> std::io::Result<()> {
             buf
         } else {
             // NOTE: example testing string
-            String::from("3.1415 .1415 2.2e+92")
+            String::from("3.1415e+92")
         }
     };
 

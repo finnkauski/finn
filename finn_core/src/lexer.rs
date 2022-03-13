@@ -24,6 +24,7 @@ enum BalancingUpdate {
 pub enum NumericHint {
     Int,
     Float,
+    Any,
 }
 
 /// The core tokens we can process
@@ -74,10 +75,32 @@ pub struct Lexer<'s> {
     bracket_balancing: HashMap<char, BalancingDepth>,
 }
 
+#[macro_export]
+macro_rules! try_consume {
+    ($self: tt, $($inner:tt),*) => {
+        if let Some(c) = $self.chars.peek() {
+            if try_consume!(impl c, $($inner),*) {
+                let tmp = *c;
+                $self.consume_char();
+                Some(tmp)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+
+    };
+
+    (impl , ) => (false);
+    (impl $c:tt, $item:tt) => (*$c == $item);
+    (impl $c:tt, $item:tt, $($rest:tt),+) => (try_consume!(impl $c, $item) || try_consume!(impl $c, $($rest),*));
+}
+
 impl<'l> Lexer<'l> {
     /// Initialise a new lexer from a given source string
-    pub fn new(chars: &str) -> Lexer {
-        Lexer {
+    pub fn new(chars: &'l str) -> Self {
+        Self {
             current_line: 1,
             current_col: 1,
             codepoint_offset: 0,
@@ -130,106 +153,96 @@ impl<'l> Lexer<'l> {
         }
     }
 
-    fn get_next_digit(&mut self, num: &str, with_radix: u32) -> LResult<char> {
-        match self.chars.next() {
-            None => return Err(LexerError::UnexpectedEndOfContent),
-            Some(c) if !c.is_digit(with_radix) => {
-                return Err(LexerError::NumericInvalidChar {
-                    raw: c,
-                    num: String::from(num),
-                })
+    fn parse_digits(&mut self, radix: u32, allow_empty: bool) -> LResult<String> {
+        let mut raw = String::new();
+
+        loop {
+            match self.chars.peek() {
+                None => {
+                    // if we allow empty then we can return empty
+                    // but if we ended up in none after some loops and
+                    // have pushed vaues on raw, we return that as well.
+                    break if allow_empty || raw.len() > 0 {
+                        Ok(raw)
+                    } else {
+                        Err(LexerError::MissingExpectedSymbol {
+                            expected: Token::Numeric {
+                                raw: "<int>".to_string(),
+                                hint: NumericHint::Any,
+                            },
+                            found: Token::EOF,
+                        })
+                    };
+                }
+                // if the next character is a digit, or if the character is an underscore and
+                // we already have some characters on the string stack, we should push this next
+                // character
+                Some(c) if c.is_digit(radix) || (*c == '_' && raw.len() > 0) => {
+                    raw.push(*c);
+                    self.consume_char();
+                }
+                // if the next character is not alphabetic AND if the next character is not
+                // an underscore, we return what we have
+                Some(c) if !c.is_ascii_alphabetic() && *c != '_' => break Ok(raw),
+
+                // Deal with that case that the next value is e, otherwise it fall
+                // just drops to the next one and we error out
+                Some(c) if *c == 'e' || *c == 'E' => break Ok(raw),
+
+                // if we get any other character, we return
+                Some(c) => {
+                    break Err(LexerError::NumericInvalidChar { raw, invalid: *c });
+                }
             }
-            Some(c) => Ok(c),
         }
     }
 
     /// The number parsing handler
-    ///
-    /// It supports:
-    /// - integers: 42
-    /// - floats: 3.1415, .6969
-    /// - exp: 1e-10 or 1e+10
-    ///
-    /// This doesn't deal with negative values.
     fn parse_number(&mut self, start: char) -> LResult<TokenType> {
-        // Initialise these here to keep track of the state
-        // Follow along for float
-        // example 3.1415
-        // start is 3
-        let mut seen_dot = false;
-        let mut seen_exp = false;
         let mut raw = start.to_string();
         let radix = 10;
+        let mut hint = NumericHint::Int;
 
-        // with 3.1415 we don't fall into this
         if start == '.' {
-            seen_dot = true;
-            // check here if the next value after `.` is a digit
-            // or not. If it isn't a digit, we get an error and we
-            // pass it up with early return.
-            //
-            // If it is a digit we also consume it here.
-            raw.push(self.get_next_digit(&raw, radix)?);
-        }
+            // If we start with a float with .
+            // the next things following this should a set of numbers
+            raw += &self.parse_digits(radix, false)?;
+            hint = NumericHint::Float;
+        } else if start.is_digit(radix) {
+            // If we start with a digit we should parse it until we
+            // face something else. So adds a set of digits in order
+            raw += &self.parse_digits(radix, true)?;
 
-        loop {
-            // grab the next char which is `.` when we parse 3.1415
-            // and start is at `3`
-            match self.chars.peek() {
-                // this is where we fall in because the next is `.` on the first loop
-                Some(c) if *c == '.' && !seen_dot && !seen_exp => {
-                    raw.push(*c);
-                    self.consume_char(); // consume to advance cursor
-                    seen_dot = true;
-                }
-                Some(c) if *c == 'e' || *c == 'E' && !seen_exp => {
-                    raw.push(*c);
-                    self.consume_char();
-                    seen_exp = true;
-
-                    let exp_radix = 10;
-
-                    // We now need to handle the cases for `1e+10` and `1e-10`
-                    match self.chars.peek() {
-                        // TODO: could do an enum and store it in the numeric type
-                        // that indicates what kind of value we're getting for the
-                        // exponent - positive or negative.
-                        Some(c) if *c == '+' || *c == '-' => {
-                            raw.push(*c);
-                            self.consume_char();
-                        }
-                        _ => {}
-                    }
-                    raw.push(self.get_next_digit(&raw, exp_radix)?);
-                }
-                // this will handle the radix cases before it drops down to the other
-                // checks
-                //
-                // in the second loop of 3.1415 we land here
-                Some(c) if c.is_digit(radix) => {
-                    raw.push(*c);
-                    self.consume_char();
-                }
-                // is_digit(10) is for the case where radix won't be 10
-                // this looks at a case where we don't parse a preset radix
-                // and we parse for '0'..='9'
-                Some(c) if c.is_ascii_alphabetic() || c.is_digit(10) => {
-                    raw.push(*c);
-                    return Err(LexerError::NumericInvalidChar { raw: *c, num: raw });
-                }
-                // TODO: can make this the while condition
-                _ => {
-                    break Ok(TokenType::Numeric {
-                        raw,
-                        hint: if seen_dot || seen_exp {
-                            NumericHint::Float
-                        } else {
-                            NumericHint::Int
-                        },
-                    })
-                }
+            // once thats done, we try to see if the next value is a
+            // . and if so we push it and then we parse the rest of the float.
+            if let Some(c) = try_consume!(self, '.') {
+                raw.push(c);
+                raw += &self.parse_digits(radix, false)?;
+                hint = NumericHint::Float;
             }
+        } else {
+            println!("Compiler Bug: We wouldn't expect this to hit");
+            return Err(LexerError::NumericInvalidChar {
+                raw,
+                invalid: start,
+            });
         }
+
+        // Once we're don with floats we should deal with any e or E
+        // to indicate exponential. This is done after we've parsed the
+        // decimal part of the float.
+        if let Some(c) = try_consume!(self, 'e', 'E') {
+            hint = NumericHint::Float;
+            raw.push(c);
+            // This makes it optional
+            if let Some(c) = try_consume!(self, '+', '-') {
+                raw.push(c);
+            }
+            // Parses the size of the exponent
+            raw += &self.parse_digits(radix, false)?;
+        }
+
+        Ok(Token::Numeric { raw, hint })
     }
 
     /// Main functio to convert a character to a token type
@@ -244,18 +257,20 @@ impl<'l> Lexer<'l> {
                 kind: PunctuationKind::Close(self.update_balancing(&c, BalancingUpdate::Pop)?),
             }),
             '0'..='9' | '.' => self.parse_number(c),
+
             _ => Err(LexerError::UnknownSymbolError { symbol: c }),
         }
     }
 
     /// Consumes the next character and handles updating the state
     /// of the lexers line and column tracking
-    pub fn consume_char(&mut self) -> Option<char> {
+    fn consume_char(&mut self) -> Option<char> {
         match self.chars.next() {
             Some(c) => {
                 if c == '\n' {
                     self.current_line += 1;
                 }
+                // XXX: This is a weird thing
                 self.current_col += 1;
                 // NOTE: this is where the other encoding support can come in handy
                 self.codepoint_offset += 1;
@@ -318,7 +333,7 @@ pub enum LexerError {
     MisbalancedSymbol { symbol: char, open: char },
 
     #[error("Can't create a numeric token. Wrong character: {raw:?}")]
-    NumericInvalidChar { raw: char, num: String },
+    NumericInvalidChar { raw: String, invalid: char },
 
     #[error("Unknown token: {symbol:?}")]
     UnknownSymbolError { symbol: char },

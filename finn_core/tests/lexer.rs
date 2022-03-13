@@ -94,41 +94,39 @@ fn parse_int() {
 fn parse_float() {
     let mut lex = Lexer::new("3.1415 .1415");
     assert_eq!(
-        lex.next_token()
-            .expect("Should produce a single float token"),
+        lex.next_token().expect("Should produce a single token"),
         TokenType::Numeric {
             raw: "3.1415".to_string(),
             hint: NumericHint::Float
         }
     );
     assert_eq!(
-        lex.next_token().expect("Should produce a single int token"),
+        lex.next_token().expect("Should produce a single token"),
         TokenType::Numeric {
             raw: ".1415".to_string(),
             hint: NumericHint::Float
         }
     );
 }
-
 #[test]
 fn parse_float_e() {
     let mut lex = Lexer::new("2.2e92 4.2e+24 4.2e-24");
     assert_eq!(
-        lex.next_token().expect("Should produce a single int token"),
+        lex.next_token().expect("Should produce a single token"),
         TokenType::Numeric {
             raw: "2.2e92".to_string(),
             hint: NumericHint::Float
         }
     );
     assert_eq!(
-        lex.next_token().expect("Should produce a single int token"),
+        lex.next_token().expect("Should produce a single token"),
         TokenType::Numeric {
             raw: "4.2e+24".to_string(),
             hint: NumericHint::Float
         }
     );
     assert_eq!(
-        lex.next_token().expect("Should produce a single int token"),
+        lex.next_token().expect("Should produce a single token"),
         TokenType::Numeric {
             raw: "4.2e-24".to_string(),
             hint: NumericHint::Float

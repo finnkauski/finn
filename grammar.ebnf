@@ -1,0 +1,19 @@
+Letter = 'a'-'z' | 'A'-'Z';
+Digit = '0'-'9';
+Sign = '+' | '-';
+
+DigitSeq = Digit (Digit | '_')*;
+Identifier = (Letter | '_') | (Letter | Digit | '_')*;
+Int = DigitSeq;
+
+FloatDecimal = DigitSeq? '.'DigitSeq;
+FloatExponent = ('e' | 'E') Sign? DigitSeq;
+
+Float = FloatDecimal FloatExponent?
+      | DigitalSeq FloatExponent;
+
+String = " ANY* ";
+Char = ' ANY ';
+Bool = 'true' | 'false';
+
+AssignmentOp = '=' | '*=' | '/=' | '%=' | '+=' | '-=';
