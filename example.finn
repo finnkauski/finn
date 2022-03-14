@@ -1,9 +1,9 @@
-def add_one (a: Int) {
+def add_one(a: Int) {
     return: a + 1;
 }
 
-def check (string: Str ) {
-    mut file = 10;
+def check(string: Str ) {
+    mut file := 10;
     if (string != "hello") {
         file += 100
     }

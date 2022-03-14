@@ -50,7 +50,14 @@ pub enum TokenType {
 
     /// Operators like + - as well as assignment operators
     /// like += and /=
-    Operator { raw: String, assignment: bool },
+    Operator { raw: char, assignment: bool },
+
+    /// Comparison Operators
+    /// <, >, >=, <=
+    ComparisonOperator { raw: char, equal: bool },
+
+    /// Negation, stand alone `!`
+    Negation,
 
     /// Assignment operation
     Assignment,
@@ -157,6 +164,20 @@ impl<'l> Lexer<'l> {
             // Operator
             '+' | '-' | '*' | '/' => self.parse_operator(c),
             ':' if try_consume!(self, '=').is_some() => Ok(TokenType::Assignment),
+
+            // Equality comparison operators
+            '!' | '=' if try_consume!(self, '=').is_some() => Ok(TokenType::ComparisonOperator {
+                raw: c,
+                equal: false,
+            }),
+            // Comparison Operators
+            '<' | '>' => {
+                let equal = try_consume!(self, '=').is_some();
+                Ok(TokenType::ComparisonOperator { raw: c, equal })
+            }
+
+            // Stand alone boolean negation operator
+            '!' if try_consume!(self, '=').is_none() => Ok(TokenType::Negation),
 
             // Identifiers
             c if c.is_ascii_alphabetic() => self.parse_ident(c),
@@ -375,13 +396,8 @@ impl<'l> Lexer<'l> {
         }
     }
 
-    fn parse_operator(&mut self, start: char) -> LResult<TokenType> {
-        let mut raw = start.to_string();
-        let mut assignment = false;
-        if let Some(c) = try_consume!(self, '=') {
-            raw.push(c);
-            assignment = true;
-        }
+    fn parse_operator(&mut self, raw: char) -> LResult<TokenType> {
+        let assignment = try_consume!(self, '=').is_some();
         Ok(TokenType::Operator { raw, assignment })
     }
 }
