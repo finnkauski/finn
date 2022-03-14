@@ -155,15 +155,17 @@ impl<'l> Lexer<'l> {
             // Any strings starting with '"' as an identifier
             '"' => self.parse_string(),
 
+            // Assignment operator
+            ':' if try_consume!(self, '=').is_some() => Ok(TokenType::Assignment),
+
             // The semicolon, useful seperator
-            ';' => Ok(TokenType::Punctuation {
+            ';' | ':' => Ok(TokenType::Punctuation {
                 raw: c,
                 kind: PunctuationKind::Separator,
             }),
 
             // Operator
-            '+' | '-' | '*' | '/' => self.parse_operator(c),
-            ':' if try_consume!(self, '=').is_some() => Ok(TokenType::Assignment),
+            '.' | '+' | '-' | '*' | '/' => self.parse_operator(c),
 
             // Equality comparison operators
             '!' | '=' if try_consume!(self, '=').is_some() => Ok(TokenType::ComparisonOperator {
@@ -388,9 +390,12 @@ impl<'l> Lexer<'l> {
     fn parse_ident(&mut self, start: char) -> LResult<TokenType> {
         let mut buf = start.to_string();
         loop {
-            match self.chars.next() {
+            match self.chars.peek() {
                 // XXX: this might be an issue
-                Some(c) if c.is_ascii_alphanumeric() => buf.push(c),
+                Some(c) if c.is_ascii_alphanumeric() || *c == '_' => {
+                    buf.push(*c);
+                    self.consume_char();
+                }
                 _ => break Ok(TokenType::Identifier(buf)),
             }
         }

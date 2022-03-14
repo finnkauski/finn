@@ -1,18 +1,18 @@
 def add_one(a: Int) {
-    return: a + 1;
+    return a + 1;
 }
 
 def check(string: Str ) {
     mut file := 10;
     if (string != "hello") {
-        file += 100
+        file += 100;
     }
-    return: file;
+    return file;
 }
 
 def load (filename: str) {
     let file := filename;
-    return: file;
+    return file;
 }
 
 def pipe := add_one . check . load
