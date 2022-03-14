@@ -87,6 +87,7 @@ pub struct Lexer<'s> {
     bracket_balancing: HashMap<char, BalancingDepth>,
 }
 
+// TODO: would this better as a method?
 #[macro_export]
 macro_rules! try_consume {
     ($self: ident, $($inner:tt),*) => {
@@ -123,32 +124,51 @@ impl<'l> Lexer<'l> {
         }
     }
 
-    /// main function to convert a character to a token type
+    /// Main function to convert a character to a token type
     fn convert_to_type(&mut self, c: char) -> LResult<TokenType> {
         match c {
+            // Opening brackets
             '(' | '{' | '[' => Ok(TokenType::Punctuation {
                 raw: c,
                 kind: PunctuationKind::Open(self.update_balancing(&c, BalancingUpdate::Push)?),
             }),
+            // Closing brackets
             ')' | '}' | ']' => Ok(TokenType::Punctuation {
                 raw: c,
                 kind: PunctuationKind::Close(self.update_balancing(&c, BalancingUpdate::Pop)?),
             }),
+
+            // Numeric
             '0'..='9' => self.parse_number(c),
-            '.' if self.next(|&c| c.is_digit(10)) => self.parse_number(c),
+            // Numeric - Float if starts with '.' and is followed by
+            // a digit
+            '.' if self.check_next_with(|&c| c.is_digit(10)) => self.parse_number(c),
+
+            // Strings
+            // Any strings starting with '"' as an identifier
             '"' => self.parse_string(),
+
+            // The semicolon, useful seperator
             ';' => Ok(TokenType::Punctuation {
                 raw: c,
                 kind: PunctuationKind::Separator,
             }),
+
+            // Operator
             '+' | '-' | '*' | '/' => self.parse_operator(c),
             ':' if try_consume!(self, '=').is_some() => Ok(TokenType::Assignment),
+
+            // Identifiers
             c if c.is_ascii_alphabetic() => self.parse_ident(c),
+
+            // Unknown
             _ => Err(LexerError::UnknownSymbolError { symbol: c }),
         }
     }
 
-    fn next<F>(&mut self, check: F) -> bool
+    /// Checks if the next item is what you expect it to be without
+    /// consuming it using a given predicate function.
+    fn check_next_with<F>(&mut self, check: F) -> bool
     where
         F: Fn(&char) -> bool,
     {
