@@ -1,7 +1,7 @@
 #[macro_export]
 macro_rules! make_punctuation_kind {
     (Seperator) => {
-        $crate::PunctuationKind::Seperator
+        $crate::PunctuationKind::Separator
     };
     (Open $depth:expr) => {
         $crate::PunctuationKind::Open($depth)

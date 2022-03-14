@@ -133,3 +133,35 @@ fn parse_float_e() {
         }
     )
 }
+#[test]
+fn parse_underscore_numbers() {
+    let mut lexer = Lexer::new("1234_000_000 123_4.0");
+    let mut token = lexer
+        .next_token()
+        .expect("Should produce a single int token");
+    assert_eq!(
+        token,
+        TokenType::Numeric {
+            raw: "1234_000_000".to_string(),
+            hint: NumericHint::Int
+        }
+    );
+    token = lexer
+        .next_token()
+        .expect("Should produce a single int token");
+    assert_eq!(
+        token,
+        TokenType::Numeric {
+            raw: "123_4.0".to_string(),
+            hint: NumericHint::Float
+        }
+    );
+}
+#[test]
+fn parse_simple_string() {
+    let mut lexer = Lexer::new("\"string\"");
+    let token = lexer
+        .next_token()
+        .expect("Should produce a single string token");
+    assert_eq!(token, TokenType::String("string".to_string()));
+}

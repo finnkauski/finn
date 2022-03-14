@@ -11,7 +11,7 @@ pub enum PunctuationKind {
     /// Keeps track of close brackets
     Close(BalancingDepth),
     /// Actual punctuation for seperation purposes
-    Seperator,
+    Separator,
 }
 pub type BalancingDepth = u32;
 enum BalancingUpdate {
@@ -36,10 +36,6 @@ pub enum TokenType {
     /// Punctuation like brackets, commas etc
     Punctuation { raw: char, kind: PunctuationKind },
 
-    /// Actions you can take on an entity
-    /// *, |, ->
-    Operator(String),
-
     /// Identifiers - Sequences of characters
     Identifier(String),
 
@@ -48,7 +44,23 @@ pub enum TokenType {
 
     /// Numeric value
     Numeric { raw: String, hint: NumericHint },
+
+    /// String value
+    String(String),
+
+    /// Operators like + - as well as assignment operators
+    /// like += and /=
+    Operator { raw: String, assignment: bool },
+
+    /// Assignment operation
+    Assignment,
+
+    /// For error handling, this is a token that can be anything
+    /// for humans to read. This token is to be used only for
+    /// Error handling purposes
+    Expected(String),
 }
+
 pub type Token = TokenType;
 
 /// Lexer module
@@ -57,7 +69,7 @@ use std::collections::HashMap;
 ///
 /// This is the main struct for the Lexer
 /// TODO: embed the line and current column updates into the chars
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Lexer<'s> {
     /// Human readable number of the line
     /// the lexer is on.
@@ -77,7 +89,7 @@ pub struct Lexer<'s> {
 
 #[macro_export]
 macro_rules! try_consume {
-    ($self: tt, $($inner:tt),*) => {
+    ($self: ident, $($inner:tt),*) => {
         if let Some(c) = $self.chars.peek() {
             if try_consume!(impl c, $($inner),*) {
                 let tmp = *c;
@@ -108,6 +120,76 @@ impl<'l> Lexer<'l> {
             chars: chars.chars().peekable(),
 
             bracket_balancing: HashMap::default(),
+        }
+    }
+
+    /// main function to convert a character to a token type
+    fn convert_to_type(&mut self, c: char) -> LResult<TokenType> {
+        match c {
+            '(' | '{' | '[' => Ok(TokenType::Punctuation {
+                raw: c,
+                kind: PunctuationKind::Open(self.update_balancing(&c, BalancingUpdate::Push)?),
+            }),
+            ')' | '}' | ']' => Ok(TokenType::Punctuation {
+                raw: c,
+                kind: PunctuationKind::Close(self.update_balancing(&c, BalancingUpdate::Pop)?),
+            }),
+            '0'..='9' => self.parse_number(c),
+            '.' if self.next(|&c| c.is_digit(10)) => self.parse_number(c),
+            '"' => self.parse_string(),
+            ';' => Ok(TokenType::Punctuation {
+                raw: c,
+                kind: PunctuationKind::Separator,
+            }),
+            '+' | '-' | '*' | '/' => self.parse_operator(c),
+            ':' if try_consume!(self, '=').is_some() => Ok(TokenType::Assignment),
+            c if c.is_ascii_alphabetic() => self.parse_ident(c),
+            _ => Err(LexerError::UnknownSymbolError { symbol: c }),
+        }
+    }
+
+    fn next<F>(&mut self, check: F) -> bool
+    where
+        F: Fn(&char) -> bool,
+    {
+        self.chars.peek().map(check).unwrap_or(false)
+    }
+
+    /// Consumes the next character and handles updating the state
+    /// of the lexers line and column tracking
+    fn consume_char(&mut self) -> Option<char> {
+        match self.chars.next() {
+            Some(c) => {
+                if c == '\n' {
+                    self.current_line += 1;
+                }
+                // XXX: This is a weird thing
+                self.current_col += 1;
+                // NOTE: this is where the other encoding support can come in handy
+                self.codepoint_offset += 1;
+
+                Some(c)
+            }
+            None => None,
+        }
+    }
+
+    /// Skips all whitespace
+    fn skip_whitespace(&mut self) {
+        while let Some(c) = self.chars.peek() {
+            if !c.is_whitespace() {
+                break;
+            }
+            self.consume_char();
+        }
+    }
+
+    pub fn next_token(&mut self) -> LResult<TokenType> {
+        self.skip_whitespace();
+
+        match self.consume_char() {
+            Some(c) => self.convert_to_type(c),
+            None => Ok(TokenType::EOF),
         }
     }
 
@@ -245,59 +327,42 @@ impl<'l> Lexer<'l> {
         Ok(Token::Numeric { raw, hint })
     }
 
-    /// Main functio to convert a character to a token type
-    fn to_type(&mut self, c: char) -> LResult<TokenType> {
-        match c {
-            '(' | '{' | '[' => Ok(TokenType::Punctuation {
-                raw: c,
-                kind: PunctuationKind::Open(self.update_balancing(&c, BalancingUpdate::Push)?),
-            }),
-            ')' | '}' | ']' => Ok(TokenType::Punctuation {
-                raw: c,
-                kind: PunctuationKind::Close(self.update_balancing(&c, BalancingUpdate::Pop)?),
-            }),
-            '0'..='9' | '.' => self.parse_number(c),
-
-            _ => Err(LexerError::UnknownSymbolError { symbol: c }),
-        }
-    }
-
-    /// Consumes the next character and handles updating the state
-    /// of the lexers line and column tracking
-    fn consume_char(&mut self) -> Option<char> {
-        match self.chars.next() {
-            Some(c) => {
-                if c == '\n' {
-                    self.current_line += 1;
+    /// Parse a string that starts with a "
+    fn parse_string(&mut self) -> LResult<TokenType> {
+        let mut buf = String::new();
+        loop {
+            match self.chars.next() {
+                Some('"') => break Ok(Token::String(buf)),
+                Some(c) => buf.push(c),
+                None => {
+                    break Err(LexerError::MissingExpectedSymbol {
+                        expected: Token::Expected("Closing Delimiter".to_string()),
+                        found: Token::EOF,
+                    })
                 }
-                // XXX: This is a weird thing
-                self.current_col += 1;
-                // NOTE: this is where the other encoding support can come in handy
-                self.codepoint_offset += 1;
-
-                Some(c)
             }
-            None => None,
+        }
+    }
+    /// Parse an identifier
+    fn parse_ident(&mut self, start: char) -> LResult<TokenType> {
+        let mut buf = start.to_string();
+        loop {
+            match self.chars.next() {
+                // XXX: this might be an issue
+                Some(c) if c.is_ascii_alphanumeric() => buf.push(c),
+                _ => break Ok(TokenType::Identifier(buf)),
+            }
         }
     }
 
-    /// Skips all whitespace
-    fn skip_whitespace(&mut self) {
-        while let Some(c) = self.chars.peek() {
-            if !c.is_whitespace() {
-                break;
-            }
-            self.consume_char();
+    fn parse_operator(&mut self, start: char) -> LResult<TokenType> {
+        let mut raw = start.to_string();
+        let mut assignment = false;
+        if let Some(c) = try_consume!(self, '=') {
+            raw.push(c);
+            assignment = true;
         }
-    }
-
-    pub fn next_token(&mut self) -> LResult<TokenType> {
-        self.skip_whitespace();
-
-        match self.consume_char() {
-            Some(c) => self.to_type(c),
-            None => Ok(TokenType::EOF),
-        }
+        Ok(TokenType::Operator { raw, assignment })
     }
 }
 
